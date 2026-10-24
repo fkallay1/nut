@@ -160,6 +160,12 @@ static time_t	lastpoll;	/* Timestamp the last polling */
 
 #if defined(QX_USB) && !defined(TESTING)
 static int	hunnox_step = 0;
+/* Hunnox/MEC0003 devices lock up (EPROTO on every later request until
+ * a USB reset) when string requests come too close to each other.
+ * Measured: requests 0.4s apart work, 0.3s or less apart lock up after
+ * the second request. The vendor UPSmart client asks once per second. */
+#define HUNNOX_MIN_INTERVAL_US	500000
+static struct timeval	hunnox_last_request = { 0, 0 };
 #endif	/* QX_USB && !TESTING */
 
 #if defined(QX_USB) && defined(QX_SERIAL)
@@ -1364,6 +1370,27 @@ static int	omron_command(const char *cmd, size_t cmdlen, char *buf, size_t bufle
 	return (int)len;
 }
 
+/* Sleep so that consecutive Hunnox string requests are at least
+ * HUNNOX_MIN_INTERVAL_US apart, then note the time of this request */
+static void	hunnox_wait_interval(void)
+{
+	struct timeval	now;
+	long	elapsed;
+
+	gettimeofday(&now, NULL);
+	if (hunnox_last_request.tv_sec || hunnox_last_request.tv_usec) {
+		elapsed = (long)(now.tv_sec - hunnox_last_request.tv_sec) * 1000000L
+			+ (long)(now.tv_usec - hunnox_last_request.tv_usec);
+		if (elapsed >= 0 && elapsed < HUNNOX_MIN_INTERVAL_US) {
+			upsdebugx(4, "%s: waiting %ld us", __func__,
+				HUNNOX_MIN_INTERVAL_US - elapsed);
+			usleep((useconds_t)(HUNNOX_MIN_INTERVAL_US - elapsed));
+			gettimeofday(&now, NULL);
+		}
+	}
+	hunnox_last_request = now;
+}
+
 static int 	hunnox_protocol(int asking_for)
 {
 	char	buf[1030];
@@ -1384,10 +1411,13 @@ static int 	hunnox_protocol(int asking_for)
 			usb_get_string(udev, 0x01,
 				langid_fix_local, (usb_ctrl_charbuf)buf, 1026);
 			usleep(10000);
+			/* The first command must keep the interval too */
+			hunnox_wait_interval();
 			break;
 		case 1:
 			if (asking_for != 0x0d) {
 				upsdebugx(3, "asking for: %02X", (unsigned int)0x0d);
+				hunnox_wait_interval();
 				usb_get_string(udev, 0x0d,
 					langid_fix_local, (usb_ctrl_charbuf)buf, 102);
 			}
@@ -1395,6 +1425,7 @@ static int 	hunnox_protocol(int asking_for)
 		case 2:
 			if (asking_for != 0x03) {
 				upsdebugx(3, "asking for: %02X", (unsigned int)0x03);
+				hunnox_wait_interval();
 				usb_get_string(udev, 0x03,
 					langid_fix_local, (usb_ctrl_charbuf)buf, 102);
 			}
@@ -1402,6 +1433,7 @@ static int 	hunnox_protocol(int asking_for)
 		case 3:
 			if (asking_for != 0x0c && !testvar("novendor")) {
 				upsdebugx(3, "asking for: %02X", (unsigned int)0x0c);
+				hunnox_wait_interval();
 				usb_get_string(udev, 0x0c,
 					langid_fix_local, (usb_ctrl_charbuf)buf, 102);
 			}
@@ -1770,6 +1802,8 @@ static int	hunnox_command(const char *cmd, size_t cmdlen, char *buf, size_t bufl
 		if (buflen > 102) {
 			buflen = 102;
 		}
+
+		hunnox_wait_interval();
 /*	} */
 
 	/* Send command/Read reply */
