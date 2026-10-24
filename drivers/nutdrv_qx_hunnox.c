@@ -105,7 +105,10 @@ static item_t	hunnox_qx2nut[] = {
      *    01234
      *    0
      */
-    { "battery.charge", 0, NULL, "BL\r", "", 6, 'B', "", 0, 0, "%.0f", QX_FLAG_QUICK_POLL, NULL, NULL, hunnox_battery_charge },
+    /* Not every hunnox device answers BL (e.g. Eurocase EA200LED returns
+     * an empty string), so keep it out of the quick poll: if it fails at
+     * init the driver skips it instead of failing every status poll. */
+    { "battery.charge", 0, NULL, "BL\r", "", 6, 'B', "", 0, 0, "%.0f", 0, NULL, NULL, hunnox_battery_charge },
 
 	/* Instant commands */
 	{ "beeper.toggle",		0,	NULL,	"Q\r",		"",	0,	0,	"",	0,	0,	NULL,	QX_FLAG_CMD,	NULL,	NULL,	NULL },
